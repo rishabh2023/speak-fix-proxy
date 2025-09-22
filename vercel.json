@@ -1,7 +1,0 @@
-{
-    "functions": {
-        "api/polish.js": {
-            "runtime": "nodejs18.x"
-        }
-    }
-}
