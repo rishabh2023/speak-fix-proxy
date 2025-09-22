@@ -1,0 +1,8 @@
+{
+    "name": "speak-fix-proxy",
+    "private": true,
+    "type": "module",
+    "dependencies": {
+        "node-fetch": "^3.3.2"
+    }
+}
