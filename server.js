@@ -54,7 +54,7 @@ wss.on("connection", (client, request, q) => {
     interim_results: "true",
     encoding: "linear16",
     sample_rate: "16000",
-    language: lang,
+    language: "multi",
     channels: "1",
   });
 
