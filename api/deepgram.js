@@ -34,7 +34,7 @@ export default async function handler(req) {
     interim_results: "true",
     encoding: "linear16",
     sample_rate: "16000",
-    language: lang,
+    language: "multi",
   });
   const dg = new WebSocket(`${DG_ENDPOINT}?${qs.toString()}`, {
     headers: { Authorization: `Token ${dgKey}` },
