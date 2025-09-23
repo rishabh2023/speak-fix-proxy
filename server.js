@@ -1,6 +1,5 @@
-// server.js – Railway WS proxy for Deepgram
-// Run: node server.js (Railway sets PORT)
-// URL:  wss://<your-app>.up.railway.app/api/deepgram?dg=...&lang=en-US
+// server.js – Railway WS proxy for Deepgram (safe version)
+// URL: wss://<your-app>.up.railway.app/api/deepgram?dg=<KEY>&lang=en-US
 
 const http = require("http");
 const url = require("url");
@@ -9,7 +8,6 @@ const WebSocket = require("ws");
 const PORT = process.env.PORT || 8080;
 
 const server = http.createServer((req, res) => {
-  // simple health/info
   if (req.url.startsWith("/health")) {
     res.writeHead(200, { "content-type": "application/json" });
     return res.end(JSON.stringify({ ok: true }));
@@ -18,9 +16,10 @@ const server = http.createServer((req, res) => {
   res.end("Deepgram WS proxy is running.\n");
 });
 
+// We do upgrade by route
 const wss = new WebSocket.Server({ noServer: true });
 
-// Optional: keepalive timer to prevent Railway idling WS
+// Keepalive for client<->proxy only
 function heartbeat() {
   this.isAlive = true;
 }
@@ -31,7 +30,6 @@ wss.on("connection", (client, request, q) => {
 
   const dgKey = q.dg;
   const lang = (q.lang || "en-US").toString();
-
   if (!dgKey) {
     try {
       client.close(1011, "Missing dg (Deepgram key)");
@@ -39,6 +37,7 @@ wss.on("connection", (client, request, q) => {
     return;
   }
 
+  // Build DG listen URL
   const params = new URLSearchParams({
     model: "nova-2-general",
     smart_format: "true",
@@ -57,13 +56,29 @@ wss.on("connection", (client, request, q) => {
   dg.binaryType = "arraybuffer";
 
   dg.on("open", () => {
+    // Send an explicit start message (harmless when query params already set)
+    try {
+      dg.send(
+        JSON.stringify({
+          type: "start",
+          encoding: "linear16",
+          sample_rate: 16000,
+          channels: 1,
+          language: lang,
+          interim_results: true,
+          punctuate: true,
+          smart_format: true,
+          model: "nova-2-general",
+        })
+      );
+    } catch {}
     try {
       client.send(JSON.stringify({ type: "ready" }));
     } catch {}
   });
 
+  // Deepgram -> browser (JSON text frames)
   dg.on("message", (data) => {
-    // Deepgram -> client: forward only text frames (JSON)
     if (typeof data === "string") {
       try {
         client.send(data);
@@ -83,16 +98,17 @@ wss.on("connection", (client, request, q) => {
     } catch {}
   });
 
-  // Client -> Deepgram: forward **binary** PCM16 and any control JSON
+  // Browser -> Deepgram
   client.on("message", (data, isBinary) => {
     if (dg.readyState !== WebSocket.OPEN) return;
 
-    // If browser sent ArrayBuffer (binary), ws lib gives Buffer (isBinary=true)
     if (isBinary) {
+      // Only forward audio binary frames to Deepgram
       dg.send(data, { binary: true });
     } else {
-      // text control messages (if you add any later)
-      dg.send(data.toString());
+      // Ignore text frames from the browser (like keep-alives / controls)
+      // If you later want to support "stop"/"flush", handle here explicitly.
+      // e.g. if (data.toString() === '{"type":"flush"}') dg.send(data.toString());
     }
   });
 
@@ -101,7 +117,6 @@ wss.on("connection", (client, request, q) => {
       dg.close();
     } catch {}
   });
-
   client.on("error", () => {
     try {
       dg.close();
@@ -117,11 +132,11 @@ server.on("upgrade", (request, socket, head) => {
       wss.emit("connection", ws, request, query);
     });
   } else {
-    socket.destroy(); // not our route
+    socket.destroy();
   }
 });
 
-// Periodic ping to keep connections healthy
+// Periodic ping to keep client<->proxy alive (does NOT go to Deepgram)
 const interval = setInterval(() => {
   wss.clients.forEach((ws) => {
     if (ws.isAlive === false) return ws.terminate();
