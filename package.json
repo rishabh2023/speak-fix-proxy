@@ -1,8 +1,9 @@
 {
     "name": "speak-fix-proxy",
     "private": true,
-    "type": "module",
     "dependencies": {
-        "node-fetch": "^3.3.2"
+        "next": "13.5.0",
+        "react": "18.2.0",
+        "react-dom": "18.2.0"
     }
 }
