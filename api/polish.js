@@ -35,11 +35,12 @@ export default async function handler(req, res) {
 
   try {
     const { text } = await readJson(req);
+    const { apiKey } = await readJson(req);
     if (!text || typeof text !== "string") {
       return res.status(400).json({ error: "Field 'text' is required" });
     }
 
-    const apiKey = req.headers["x-api-key"] || process.env.GEMINI_API_KEY;
+    // const apiKey = req.headers["x-api-key"] || process.env.GEMINI_API_KEY;
 
     const prompt = `You are a writing assistant. Fix grammar, punctuation, and casing.
 Keep the meaning. Be concise. Return only the corrected text (no quotes, no code fences).
