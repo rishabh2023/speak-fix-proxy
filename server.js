@@ -1,8 +1,10 @@
-// server.js — VERY VERBOSE proxy (Deepgram WS)
-// Logs: connections, binary sizes, frame previews, errors.
+// server.js — Deepgram WS proxy (handles binary JSON)
+// Railway: wss://<app>.up.railway.app/api/deepgram?dg=<KEY>&lang=en-US
+
 const http = require("http");
 const url = require("url");
 const WebSocket = require("ws");
+
 const PORT = process.env.PORT || 8080;
 
 const server = http.createServer((req, res) => {
@@ -14,15 +16,29 @@ const server = http.createServer((req, res) => {
   res.end("Deepgram WS proxy is running.\n");
 });
 
-const wss = new WebSocket.Server({ noServer: true });
+const wss = new WebSocket.Server({
+  noServer: true,
+  // let ws handle permessage-deflate so DG may send compressed frames
+  perMessageDeflate: {
+    zlibDeflateOptions: { chunkSize: 1024 },
+    zlibInflateOptions: { chunkSize: 1024 },
+    serverNoContextTakeover: true,
+    clientNoContextTakeover: true,
+  },
+});
+
+function heartbeat() {
+  this.isAlive = true;
+}
 
 wss.on("connection", (client, request, q) => {
   console.log("[proxy] client connected", request.socket.remoteAddress);
   client.isAlive = true;
-  client.on("pong", () => (client.isAlive = true));
+  client.on("pong", heartbeat);
 
   const dgKey = q.dg;
   const lang = (q.lang || "en-US").toString();
+
   if (!dgKey) {
     console.log("[proxy] missing dg key");
     try {
@@ -42,14 +58,15 @@ wss.on("connection", (client, request, q) => {
     channels: "1",
   });
 
-  console.log("[proxy] connecting Deepgram…", lang);
   const upstream = new WebSocket(`wss://api.deepgram.com/v1/listen?${params}`, {
     headers: { Authorization: `Token ${dgKey}` },
+    perMessageDeflate: true,
   });
   upstream.binaryType = "arraybuffer";
 
   upstream.on("open", () => {
     console.log("[proxy] upstream open");
+    // explicit start is harmless and sometimes required
     try {
       upstream.send(
         JSON.stringify({
@@ -72,15 +89,33 @@ wss.on("connection", (client, request, q) => {
     } catch {}
   });
 
-  upstream.on("message", (data) => {
-    if (typeof data === "string") {
-      const preview = data.length > 200 ? data.slice(0, 200) + "…" : data;
-      console.log("[proxy] <- DG", preview);
-      try {
-        client.send(data);
-      } catch {}
+  // IMPORTANT: handle both string and binary (Buffer/ArrayBuffer) from DG
+  upstream.on("message", (data, isBinary) => {
+    let text;
+    if (isBinary) {
+      // ws gives Buffer in Node; DG sometimes compresses JSON → Buffer
+      text = Buffer.isBuffer(data)
+        ? data.toString("utf8")
+        : data instanceof ArrayBuffer
+        ? Buffer.from(data).toString("utf8")
+        : "";
+      console.log(
+        "[proxy] <- DG binary",
+        Buffer.isBuffer(data) ? data.length : data?.byteLength || 0
+      );
     } else {
-      console.log("[proxy] <- DG binary", data?.byteLength);
+      text = data; // already string
+      // optional preview
+      const preview = text.length > 200 ? text.slice(0, 200) + "…" : text;
+      console.log("[proxy] <- DG", preview);
+    }
+
+    if (text) {
+      try {
+        client.send(text);
+      } catch (e) {
+        console.log("[proxy] downstream send err", e?.message);
+      }
     }
   });
 
@@ -101,10 +136,12 @@ wss.on("connection", (client, request, q) => {
     } catch {}
   });
 
+  // Browser -> Deepgram: forward ONLY binary audio
   client.on("message", (data, isBinary) => {
     if (upstream.readyState !== WebSocket.OPEN) return;
     if (isBinary) {
-      console.log("[proxy] -> DG audio bytes", data.length || data.byteLength);
+      const size = data.length || data.byteLength || 0;
+      console.log("[proxy] -> DG audio bytes", size);
       upstream.send(data, { binary: true });
     } else {
       // ignore text from browser
@@ -119,7 +156,6 @@ wss.on("connection", (client, request, q) => {
       upstream.close();
     } catch {}
   });
-
   client.on("error", (err) => {
     console.log("[proxy] client error", err?.message || err);
     try {
@@ -139,6 +175,7 @@ server.on("upgrade", (request, socket, head) => {
   }
 });
 
+// keep client<->proxy alive (ping doesn’t go upstream)
 const interval = setInterval(() => {
   wss.clients.forEach((ws) => {
     if (ws.isAlive === false) return ws.terminate();
