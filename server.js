@@ -34,7 +34,7 @@ wss.on("connection", (client, request, q) => {
   client.on("pong", heartbeat);
 
   const dgKey = q.dg;
-  const langParam = (q.lang || "en-US").toString(); // "en-US" or "multi"
+  const langParam = (q.lang || "multi").toString(); // "en-US" or "multi"
   const langsList = (q.langs || "").toString(); // e.g. "en,hi,es"
 
   if (!dgKey) {
